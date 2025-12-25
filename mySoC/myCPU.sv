@@ -138,6 +138,28 @@ assign debug_wb_value = WBU_rd_value;
 
   logic [31:0] MEM_forward_val;
   assign MEM_forward_val = (LSU_jump_flag | (|LSU_csr_wen)) ? LSU_rd_value : LSU_Ex_result;
+  
+  logic [31:0] LSU_Rdata_raw;
+  logic [2:0] LSU_funct3;
+  logic [31:0] LSU_rdata_wb_raw;
+  logic [2:0] LSU_funct3_wb;
+  logic [3:0] LSU_csr_wen_wb;
+  logic [31:0] LSU_Ex_result_wb;
+  logic [31:0] LSU_rd_value_wb;
+  logic [4:0] LSU_rd_wb;
+  logic LSU_mem_ren_wb;
+  logic LSU_R_wen_wb;
+  logic LSU_jump_flag_wb;
+  logic [31:0] LSU_forward_val_wb;
+  logic LSU_valid_wb;
+  logic [31:0] LSU_pc_wb;
+
+  logic [31:0] LSU_Ex_result_pipe;
+  logic [4:0] LSU_rd_pipe;
+  logic LSU_mem_ren_pipe;
+  logic LSU_R_wen_pipe;
+  logic LSU_valid_pipe;
+  logic [31:0] LSU_forward_val_pipe;
 
   Control Control_inst0 (
 
@@ -149,6 +171,8 @@ assign debug_wb_value = WBU_rd_value;
       .branch_pc    (EXU_branch_pc),
       .Ex_result    (EXU_Ex_result),
       .MEM_Ex_result(MEM_forward_val),
+      .MEM_PIPE_Ex_result(LSU_forward_val_pipe),
+      .MEM2_Ex_result(LSU_forward_val_wb),
       .IDU_rs1_value(IDU_rs1_value),
       .IDU_rs2_value(IDU_rs2_value),
       .MEM_Rdata    (LSU_Rdata),
@@ -160,6 +184,7 @@ assign debug_wb_value = WBU_rd_value;
       .fence_i_flag(EXU_fence_i_flag),
 
       .MEM_mem_ren(LSU_mem_ren),
+      .MEM_PIPE_mem_ren(LSU_mem_ren_pipe),
 
       .IDU_rs1(IDU_rs1),
       .IDU_rs2(IDU_rs2),
@@ -167,12 +192,18 @@ assign debug_wb_value = WBU_rd_value;
       .IDU_valid(IDU_valid),
       .EXU_valid(EXU_valid),
       .MEM_valid(LSU_valid),
+      .MEM_PIPE_valid(LSU_valid_pipe),
+      .MEM2_valid(LSU_valid_wb),
 
       .EXU_rd(EXU_rd),
       .MEM_rd(LSU_rd),
+      .MEM_PIPE_rd(LSU_rd_pipe),
+      .MEM2_rd(LSU_rd_wb),
       .EXU_mem_ren(EXU_mem_ren),
       .EXU_R_Wen(EXU_R_wen),
       .MEM_R_Wen(LSU_R_wen),
+      .MEM_PIPE_R_Wen(LSU_R_wen_pipe),
+      .MEM2_R_Wen(LSU_R_wen_wb),
 
       .WB_rd_value(WBU_rd_value),
       .WB_rd(WBU_rd),
@@ -314,6 +345,8 @@ assign debug_wb_value = WBU_rd_value;
 
       .R_wen_next    (LSU_R_wen),
       .LSU_Rdata     (LSU_Rdata),
+      .LSU_Rdata_raw (LSU_Rdata_raw),
+      .funct3_next   (LSU_funct3),
       .csr_wen_next  (LSU_csr_wen),
       .Ex_result_next(LSU_Ex_result),
       .rd_value_next (LSU_rd_value),
@@ -322,11 +355,31 @@ assign debug_wb_value = WBU_rd_value;
       .jump_flag_next(LSU_jump_flag),
 
       .pc_out(LSU_pc),
+      .pc_wb(LSU_pc_wb),
       .addr (perip_addr),
       .wen  (perip_wen),
       .wdata(perip_wdata),
       .mask (perip_mask),
       .rdata(perip_rdata),
+
+      .rdata_wb_raw(LSU_rdata_wb_raw),
+      .funct3_wb(LSU_funct3_wb),
+      .csr_wen_wb(LSU_csr_wen_wb),
+      .Ex_result_wb(LSU_Ex_result_wb),
+      .rd_value_wb(LSU_rd_value_wb),
+      .rd_wb(LSU_rd_wb),
+      .mem_ren_wb(LSU_mem_ren_wb),
+      .R_wen_wb(LSU_R_wen_wb),
+      .jump_flag_wb(LSU_jump_flag_wb),
+      .forward_val_wb(LSU_forward_val_wb),
+      .valid_wb(LSU_valid_wb),
+
+      .Ex_result_pipe(LSU_Ex_result_pipe),
+      .rd_pipe(LSU_rd_pipe),
+      .mem_ren_pipe(LSU_mem_ren_pipe),
+      .R_wen_pipe(LSU_R_wen_pipe),
+      .valid_pipe(LSU_valid_pipe),
+      .forward_val_pipe(LSU_forward_val_pipe),
 
       .valid_last(EXU_valid),
       .ready_last(LSU_ready),
@@ -340,15 +393,16 @@ assign debug_wb_value = WBU_rd_value;
       .clock(cpu_clk),
       .reset(cpu_rst),
 
-      .MEM_Rdata_in(LSU_Rdata),
-      .Ex_result_in(LSU_Ex_result),
-      .rd_value_in (LSU_rd_value),
-      .rd_in       (LSU_rd),
-      .csr_wen_in  (LSU_csr_wen),
-      .R_wen_in    (LSU_R_wen),
-      .mem_ren_in  (LSU_mem_ren),
-      .jump_flag_in(LSU_jump_flag),
-      .pc_in (LSU_pc),
+      .MEM_Rdata_in(LSU_rdata_wb_raw),
+      .funct3_in   (LSU_funct3_wb),
+      .Ex_result_in(LSU_Ex_result_wb),
+      .rd_value_in (LSU_rd_value_wb),
+      .rd_in       (LSU_rd_wb),
+      .csr_wen_in  (LSU_csr_wen_wb),
+      .R_wen_in    (LSU_R_wen_wb),
+      .mem_ren_in  (LSU_mem_ren_wb),
+      .jump_flag_in(LSU_jump_flag_wb),
+      .pc_in (LSU_pc_wb),
 
       .R_wen_next   (WBU_R_wen),
       .csr_wen_next (WBU_csr_wen),
@@ -356,7 +410,7 @@ assign debug_wb_value = WBU_rd_value;
       .rd_value_next(WBU_rd_value),
       .pc_out(WBU_pc),
 
-      .valid_in(LSU_valid),
+      .valid_in(LSU_valid_wb),
       .ready(WBU_ready),
 
       .rd_next   (WBU_rd),

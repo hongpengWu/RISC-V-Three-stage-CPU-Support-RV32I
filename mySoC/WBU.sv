@@ -6,6 +6,7 @@ module WBU (
     input reset,
 
     input [31:0] MEM_Rdata_in,
+    input [2:0]  funct3_in,
     input [31:0] Ex_result_in,
     input [31:0] rd_value_in,
     input [4:0] rd_in,
@@ -29,6 +30,7 @@ module WBU (
 );
 
   logic [31:0] MEM_Rdata_reg;
+  logic [2:0]  funct3_reg;
   logic [31:0] Ex_result_reg;
   logic [31:0] rd_value_reg;
   logic [ 4:0] rd_reg;
@@ -42,6 +44,7 @@ module WBU (
   always_ff @(posedge clock) begin
     if (reset) begin
         MEM_Rdata_reg <= 0;
+        funct3_reg    <= 0;
         Ex_result_reg <= 0;
         rd_value_reg  <= 0;
         rd_reg        <= 0;
@@ -54,6 +57,7 @@ module WBU (
     end
     else begin
         MEM_Rdata_reg <= MEM_Rdata_in;
+        funct3_reg    <= funct3_in;
         Ex_result_reg <= Ex_result_in;
         rd_value_reg  <= rd_value_in;
         rd_reg        <= rd_in;
@@ -68,9 +72,47 @@ module WBU (
 
   assign pc_out        = pc_reg;
   assign valid_next    = valid_reg;
+
+  logic [31:0] rdata_8i;
+  logic [31:0] rdata_16i;
+  logic [31:0] rdata_8u;
+  logic [31:0] rdata_16u;
+  logic [31:0] rdata_wb;
+
+  assign rdata_8u  = {24'd0, MEM_Rdata_reg[7:0]};
+  assign rdata_16u = {16'd0, MEM_Rdata_reg[15:0]};
+
+  /* verilator lint_off PINMISSING */
+  sext #(
+      .DATA_WIDTH(8),
+      .OUT_WIDTH (32)
+  ) sext_i8 (
+      .data     (MEM_Rdata_reg[0+:8]),
+      .sext_data(rdata_8i)
+  );
+
+  sext #(
+      .DATA_WIDTH(16),
+      .OUT_WIDTH (32)
+  ) sext_i16 (
+      .data     (MEM_Rdata_reg[0+:16]),
+      .sext_data(rdata_16i)
+  );
+
+  always @(*) begin
+    case (funct3_reg)
+      3'b000:  rdata_wb = rdata_8i;
+      3'b001:  rdata_wb = rdata_16i;
+      3'b010:  rdata_wb = MEM_Rdata_reg;
+      3'b100:  rdata_wb = rdata_8u;
+      3'b101:  rdata_wb = rdata_16u;
+      default: rdata_wb = 0;
+    endcase
+  end
+
   logic wb_sel_jmp_csr;
   assign wb_sel_jmp_csr = jump_flag_reg | (|csr_wen_reg);
-  assign rd_value_next = wb_sel_jmp_csr ? rd_value_reg : (mem_ren_reg ? MEM_Rdata_reg : Ex_result_reg);
+  assign rd_value_next = wb_sel_jmp_csr ? rd_value_reg : (mem_ren_reg ? rdata_wb : Ex_result_reg);
   assign csrd          = Ex_result_reg;
   assign csr_wen_next  = csr_wen_reg;
   assign R_wen_next    = R_wen_reg & valid_reg;
