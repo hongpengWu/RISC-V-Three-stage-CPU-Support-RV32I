@@ -1,195 +1,176 @@
-# RISC-V Three-stage CPU + Five-stage SoC Verification (RV32I)
+# RV32I-Pipline-CPU-trace-JYD
 
-这个仓库同时包含：
+本仓库包含两套 RV32I 流水线 CPU 相关实现：
 
-- `CPU/`：第九届集创赛参赛用 **三级流水线 CPU RTL（原始版本）**
-- `cdp-tests/`：在原始版本基础上扩展的 **五级流水线 + SoC 集成 + 回归验证环境（优化版本）**
+- `CPU/`：竞赛期间使用的三级流水线 CPU（结构：`IFU&IDU - EXU - LSU&WBU`），用于集成到竞业达 SoC 模板工程（Vivado）。
+- `cdp-tests/`：竞赛结束后继续优化的验证平台与 SoC 包装（CPU 为五级流水线版本，位于 `cdp-tests/mySoC/`），用于基于 Verilator 的指令回归测试与波形生成。
 
-| 子项目 | 位置 | 你会用它做什么 | 推荐入口 |
-| --- | --- | --- | --- |
-| 三级流水线 CPU | `CPU/` | 阅读核心 RTL、理解三段流水、学习基础冒险处理 | `CPU/myCPU.sv` |
-| 五级流水线 + SoC + 回归 | `cdp-tests/` | 跑回归、看波形、研究更深流水/更强前递/时序优化 | `cdp-tests/mySoC/miniRV_SoC.v` |
+---
 
-## 快速开始（建议从 `cdp-tests/` 走起）
+## 目录结构速览
+
+- `CPU/`：三级流水线 CPU（SystemVerilog）
+  - 入口：`CPU/myCPU.sv`
+- `cdp-tests/`：测试平台（Linux 下运行）
+  - `cdp-tests/mySoC/`：五级流水线 CPU + SoC 顶层封装
+    - SoC 顶层：`cdp-tests/mySoC/miniRV_SoC.v`
+    - CPU 核：`cdp-tests/mySoC/myCPU.sv`
+  - `cdp-tests/vsrc/`：仿真用 RAM/IROM 模型（从 `meminit.bin` 初始化）
+  - `cdp-tests/csrc/`：Verilator C++ testbench（difftest）
+  - `cdp-tests/golden_model/`：参考模型（C 语言实现的 RV32I 流水线模型）
+  - `cdp-tests/bin/`：测试用指令镜像（`.bin`）
+  - `cdp-tests/run_all_tests.py`：批量回归脚本
+
+---
+
+## 一、`CPU/`（三级流水线）在 Vivado SoC 模板中使用
+
+该部分用于“竞业达 SoC 模板工程”下的 FPGA 集成。整体流程是：打开赛方/模板工程 → 添加本仓库 `CPU/` 下全部源码 → 按赛方要求配置 IP → 设置 PLL 输出 100MHz → 综合实现生成 bitstream。
+
+### 1. 打开模板工程
+
+1. 使用赛方要求的 Vivado 版本打开“竞业达 SoC 模板工程”。
+2. 确认模板工程可以正常综合（至少能无错误打开与刷新 IP）。
+
+### 2. 添加 CPU 源码
+
+1. 在 Vivado 中选择：
+   - `Add Sources` → `Add or Create Design Sources` → `Add Files`
+2. 选择并添加 `CPU/` 目录下所有 `.sv` 文件。
+3. 确认这些文件的类型为 SystemVerilog（`.sv`）。
+4. 确认包含文件路径：
+   - `myCPU.sv` 使用 `` `include "para.sv" ``
+   - 建议在 Vivado 工程设置中把 `CPU/` 目录加入 include search path（或将 `para.sv` 设为全局 include 文件），避免 include 找不到导致编译失败。
+
+### 3. 在 SoC 顶层中例化 `myCPU`
+
+三级流水线版本 CPU 的模块接口（见 `CPU/myCPU.sv`）为：
+
+- 时钟/复位：`cpu_clk`、`cpu_rst`
+- IROM：`irom_addr`（输出地址）、`irom_data`（输入指令）
+- 外设/数据访问接口：`perip_addr`、`perip_wen`、`perip_mask`、`perip_wdata`、`perip_rdata`
+
+将 `myCPU` 例化到模板工程的 SoC 顶层/CPU wrapper 中，并按赛方模板定义连接到对应的 IROM/总线/外设接口。
+
+以上工作结束后，Vivado的左侧文件结构如下图
+
+![竞业达SoC工程模板添加CPU文件后的Vivado结构](Picture/JYD_SoC.png)
+
+### 4. 按赛方要求配置 IP 核
+
+按模板/赛方要求配置相关 IP（如指令存储、数据存储、外设、调试接口等）。此仓库不强绑定具体 IP 组合，需以赛方模板要求为准。
+
+### 5. 设置 PLL 为 100MHz
+
+1. 在模板工程中找到赛方提供的 PLL/Clocking Wizard（或按赛方要求新建）。
+2. 将 CPU 使用的时钟输出设置为 100MHz。
+3. 将该 100MHz 时钟连接到 `cpu_clk`。
+   ！！！注意：100MHz没有时序违例，比赛时最高可设置为150MHz，有时序违例，但能成功上板
+
+### 6. 综合实现与上板
+
+1. 运行综合（Synthesis）与实现（Implementation）。
+2. 生成 Bitstream。
+3. 下载到开发板并按赛方流程运行验证。
+
+![竞业达官方平台上板测试结果截图](Picture/JYD_result.png)
+
+---
+
+## 二、`cdp-tests/`（五级流水线 SoC + 回归测试平台）使用方法
+
+该部分用于在 Linux 环境下，通过 Verilator 编译仿真，并用参考模型进行 difftest，从而验证 RV32I 指令集测试用例是否通过。
+
+### 0. 环境依赖（Linux）
+
+需要的软件通常包括：
+
+- `verilator`
+- `make`
+- `g++`/`gcc`
+- `python3`
+
+以 Ubuntu/Debian 为例可安装：
 
 ```bash
-cd cdp-tests
-make clean && make
-python run_all_tests.py
+sudo apt-get update
+sudo apt-get install -y verilator make g++ python3
 ```
 
-运行单个用例（例如 `add`）：
+### 1. 获取代码并进入测试目录
 
 ```bash
-cd cdp-tests
-make clean && make
-make run TEST=add
+git clone https://github.com/hongpengWu/RV32I-Pipline-CPU-trace-JYD.git
+cd RV32I-Pipline-CPU-trace-JYD/cdp-tests
 ```
 
-### 环境依赖（最小集合）
+### 2. 编译仿真器（一次编译，多次运行）
 
-- Verilator
-- Python 3
-- GNU Make
-- C/C++ 编译器（例如 `g++` 或 `clang++`）
-
-## 目录导航
-
-- [目录结构](#目录结构)
-- [1. `CPU/`：集创赛三级流水线 CPU（原始版本）](#cpu)
-- [2. `cdp-tests/`：五级流水线 + SoC + 回归验证（优化版本）](#cdp-tests)
-- [回归用例覆盖](#回归用例覆盖)
-
-## 目录结构
-
-<details>
-<summary>展开查看完整目录树</summary>
-
-```text
-.
-├── CPU/
-│   ├── add.sv
-│   ├── ALU.sv
-│   ├── Control.sv
-│   ├── CSR.sv
-│   ├── Data_hazard.sv
-│   ├── EX_LSWB_Reg.sv
-│   ├── EXU.sv
-│   ├── IFID_EX_Reg.sv
-│   ├── IFU.sv
-│   ├── IDU.sv
-│   ├── LSU.sv
-│   ├── myCPU.sv
-│   ├── para.sv
-│   ├── Reg.sv
-│   ├── RegisterFile.sv
-│   ├── Reg_Stack.sv
-│   ├── sext.sv
-│   └── WBU.sv
-│
-├── cdp-tests/
-│   ├── Makefile
-│   ├── start.dump
-│   ├── asm/
-│   ├── bin/
-│   ├── csrc/
-│   ├── golden_model/
-│   │   ├── emu.c
-│   │   ├── include/
-│   │   ├── peripheral/
-│   │   └── stage/
-│   ├── mySoC/
-│   │   ├── add.sv
-│   │   ├── ALU.sv
-│   │   ├── Control.sv
-│   │   ├── CSR.sv
-│   │   ├── Data_hazard.sv
-│   │   ├── dram_driver.sv
-│   │   ├── EXU.sv
-│   │   ├── IFU.sv
-│   │   ├── IDU.sv
-│   │   ├── LSU.sv
-│   │   ├── miniRV_SoC.v
-│   │   ├── myCPU.sv
-│   │   ├── para.sv
-│   │   ├── Reg.sv
-│   │   ├── RegisterFile.sv
-│   │   ├── Reg_Stack.sv
-│   │   ├── sext.sv
-│   │   └── WBU.sv
-│   ├── obj_dir/
-│   ├── vsrc/
-│   │   ├── ram.v
-│   │   ├── ram0.v
-│   │   ├── ram1.v
-│   │   └── ram2.v
-│   ├── waveform/
-│   └── run_all_tests.py
-│
-└── README.md
+```bash
+make clean
+make
 ```
 
-</details>
+说明：
+
+- `Makefile` 会调用 Verilator，将 `vsrc/ram.v` 与 `mySoC/*` 作为 Verilog/SystemVerilog 源码，并把 `golden_model/` 与 `csrc/` 下的 C/C++ 文件一起编译成可执行仿真器。
+- 顶层模块为 `miniRV_SoC`（见 `cdp-tests/mySoC/miniRV_SoC.v`）。
+- 编译产物在 `cdp-tests/obj_dir/`。
+
+### 3. 运行单个测试用例
+
+例如运行 `addi`：
+
+```bash
+make run TEST=addi
+```
+
+运行时会发生：
+
+- 通过软链接把 `bin/<TEST>.bin` 链接为 `meminit.bin`（指令/数据初始化文件名由 `Makefile` 固定为 `meminit.bin`）
+- 启动 `./obj_dir/VminiRV_SoC <TEST>`
+- 生成波形到 `waveform/<TEST>.vcd`
+
+如需查看波形（可选）：
+
+```bash
+gtkwave waveform/addi.vcd
+```
+
+### 4. 批量回归全部测试
+
+```bash
+python3 run_all_tests.py
+```
+
+说明：
+
+- 脚本会遍历 `bin/` 下所有 `.bin`，对每个用例调用：
+  - `make run_for_python TEST=<case>`
+- 结束后打印 `Passed Tests / Failed Tests` 汇总。
+
+### 5. 如何判断 PASS/FAIL（重要）
+
+该平台以“参考模型 difftest + 程序退出码”判断结果：
+
+- 若在 difftest 中发现任意一条写回信息不一致，会打印差异并 `exit(-1)`，该用例判定为失败。
+- 若程序执行到 `ecall`，参考模型会结束仿真：
+  - 默认检查寄存器 `a0(x10)`：`a0 == 0` 认为测试点通过，否则认为失败。
+- 若 CPU 跑飞/卡住导致长时间未结束，会触发超时（testbench 循环次数上限 1,000,000），并提示 `Timed out`。
+
+运行成功后终端信息如下：
+
+![cdp-tests批量运行后的终端结果](Picture/trace_result.png)
+
+### 6. 常见问题排查
+
+- `verilator: command not found`：未安装 Verilator 或 PATH 未配置。
+- `ln: failed to create symbolic link`：文件系统不支持软链接或权限不足；可在 Linux 下运行，或手动把 `bin/<TEST>.bin` 复制为 `meminit.bin`（并保持文件名一致）。
+- 一直 `Timed out`：通常表示 CPU 没有正确执行到结束点（例如分支/访存/异常返回/跳转等实现问题），或 difftest 输入输出不匹配导致模型侧提前退出/卡住。
 
 ---
 
-<a id="cpu"></a>
-## 🏛️ 1. `CPU/`：集创赛三级流水线 CPU（原始版本）
+## 三、二者关系与推荐使用方式
 
-### 设计定位
-
-`CPU/` 下是参赛版本的核心 CPU RTL。目录内以 `CPU/myCPU.sv` 为顶层，组合 IFU/IDU/EXU/LSU/WBU、CSR、寄存器堆等模块，目标是“功能正确 + 模块边界清晰 + 便于后续集成”。
-
-### 流水线划分（按实际寄存器边界理解）
-
-该版本通过两个显式的流水线寄存器模块，把三级流水线切成清晰的 3 段：
-
-- `CPU/IFID_EX_Reg.sv`：把 IDU 侧的控制信号与操作数寄存到 EXU 侧，并提供清空/冲刷接口（配合分支/异常/暂停）。
-- `CPU/EX_LSWB_Reg.sv`：把 EXU 的结果与访存/写回相关控制信号寄存到 LSU/WBU 侧，固定“执行结果 → 访存写回”的级间边界。
-
-```mermaid
-flowchart LR
-  S1["Stage 1<br/>IFU + IDU"] --> R1["IFID_EX_Reg"]
-  R1 --> S2["Stage 2<br/>EXU"]
-  S2 --> R2["EX_LSWB_Reg"]
-  R2 --> S3["Stage 3<br/>LSU + WBU"]
-```
-
-### 控制与数据冒险处理（从文件视角快速定位）
-
-- `CPU/Control.sv`：决定 `dnpc`（跳转/分支/异常返回等）与 `IFU_stall`、`EXU_inst_clear` 等控制；包含典型的 load-use 暂停判定与流水清空联动。
-- `CPU/Data_hazard.sv`：前递选择逻辑（优先 EX，再到 MEM）；当 MEM 为 load 时，前递源切到 `MEM_Rdata` 而不是 `MEM_Ex_result`，对应“load 数据在 MEM 阶段可用”的实现假设。
-
-### 这个版本适合怎么读
-
-- 想看顶层连线：从 `CPU/myCPU.sv` 开始。
-- 想看“分支/异常/暂停/冲刷”：重点看 `CPU/Control.sv`。
-- 想看“前递/冒险”：重点看 `CPU/Data_hazard.sv`。
-
----
-
-<a id="cdp-tests"></a>
-## 🚀 2. `cdp-tests/`：五级流水线 + SoC + 回归验证（优化版本）
-
-### 设计定位
-
-`cdp-tests/` 不只是 RTL：它把 CPU（`cdp-tests/mySoC/`）和验证环境（Golden Model + 测例集 + Verilator 仿真 + 自动脚本）组织成一个可持续迭代的工程目录，更适合做“回归驱动的优化与重构”。
-
-### SoC 顶层与调试接口
-
-- `cdp-tests/mySoC/miniRV_SoC.v`：SoC 顶层，连接时钟/复位，挂接 IROM 与 DRAM 驱动，并实例化 `myCPU`；导出 `debug_wb_*`（写回指令/PC/写使能/目的寄存器/写回值）用于外部 trace 对齐。
-- `cdp-tests/mySoC/myCPU.sv`：CPU 顶层；在 IFU/IDU/EXU/LSU/WBU 的基础结构上，增加了更工程化的 `valid/ready` 级间控制，以及为更深访存流水预留/引入的中间级信号（如 `MEM_PIPE_*`、`MEM2_*`）。
-
-### 访存通路的时序优化（LSU 的工程化取舍）
-
-`cdp-tests/mySoC/LSU.sv` 中能直接看到面向高频目标的拆分策略：
-
-- 关键寄存器使用 `(* max_fanout = N *)` 属性，降低高扇出导致的路由延迟风险。
-- 通过 `*_pipe`、`*_wb` 等中间级寄存，把“地址/控制/数据”的长组合路径拆短，为前递与写回提供稳定的时序来源。
-
-### 冒险检测与前递增强（支撑更深流水）
-
-- `cdp-tests/mySoC/Data_hazard.sv`：前递选择从 2-bit 扩展为 3-bit，并把来源扩展到 `EX/MEM/MEM_PIPE/MEM2/WB`；同时更严格地用 `*_valid` 门控避免错误前递。
-- `cdp-tests/mySoC/Control.sv`：把 load-use 检测扩展到更深的访存流水级（例如 `pipe_load_use`），并同步扩展 `EXU_rs1_in/EXU_rs2_in` 的选择源。
-
-### 回归验证框架（你会实际用到的入口）
-
-- `cdp-tests/Makefile`：使用 Verilator 构建 `miniRV_SoC`，并支持 trace 输出到 `cdp-tests/waveform/`。
-- `cdp-tests/run_all_tests.py`：遍历 `cdp-tests/bin/` 下全部用例，逐个回归并汇总 Pass/Fail。
-
-```mermaid
-flowchart LR
-  BIN["bin/*.bin"] --> RUN["run_all_tests.py"]
-  RUN --> MAKE["make run_for_python TEST=..."]
-  MAKE --> SIM["Verilator 仿真 (miniRV_SoC)"]
-  SIM --> GM["Golden Model 对拍/比对"]
-  SIM --> VCD["waveform/*.vcd (可选)"]
-```
-
----
-
-## 回归用例覆盖
-
-当前 `cdp-tests/bin/` 目录已包含一组面向 RV32I 的基础指令回归用例（算术/逻辑、移位、分支跳转、访存、立即数与上位立即数等），例如：
-
-`add/addi/sub/and/andi/or/ori/xor/xori/sll/slli/srl/srli/sra/srai/slt/sltu/slti/sltiu/lui/auipc/jal/jalr/beq/bne/blt/bltu/bge/bgeu/lb/lbu/lh/lhu/lw/sb/sh/sw`
+- 想在 FPGA 模板工程中集成并上板：优先看 `CPU/`（三级流水线）并按“Vivado SoC 模板集成流程”操作。
+- 想做指令级回归验证、对照参考模型快速定位问题：使用 `cdp-tests/`（五级流水线 SoC + difftest 平台）。
